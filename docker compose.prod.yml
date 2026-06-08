@@ -1,0 +1,51 @@
+version: "3.9"
+
+# Production docker-compose
+# Images are pulled from Docker Hub — not built here.
+# IMAGE_TAG and DOCKERHUB_USERNAME are injected by the deploy workflow.
+
+services:
+  backend:
+    image: ${DOCKERHUB_USERNAME}/drr-backend:${IMAGE_TAG:-latest}
+    container_name: drr-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ENVIRONMENT=production
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/drr-frontend:${IMAGE_TAG:-latest}
+    container_name: drr-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    container_name: drr-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
