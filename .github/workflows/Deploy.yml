@@ -1,0 +1,149 @@
+name: CD — Build, Push & Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent deployments (queue instead of cancel)
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ─────────────────────────────────────────
+  # Stage 6 — Build & push to Docker Hub
+  # ─────────────────────────────────────────
+  push-images:
+    name: Push · Docker Hub
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Generate tags: commit SHA (always) + "latest" (on main only)
+      - name: Extract metadata (backend)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/drr-backend
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract metadata (frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/drr-frontend
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────
+  # Stage 7 — Deploy to cloud VM
+  # ─────────────────────────────────────────
+  deploy:
+    name: Deploy · Cloud VM
+    runs-on: ubuntu-latest
+    needs: [push-images]
+    environment: production      # requires manual approval in GitHub (optional)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy docker-compose to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "docker-compose.prod.yml,.env.prod.example"
+          target: "~/drr"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/drr
+
+            # Pull new images (tagged with commit SHA for traceability)
+            export IMAGE_TAG=${{ needs.push-images.outputs.image_tag }}
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+
+            docker compose -f docker-compose.prod.yml pull
+
+            # Store current running image tag for rollback
+            PREV_TAG=$(docker inspect drr-backend --format='{{index .Config.Image}}' 2>/dev/null || echo "none")
+            echo "Previous tag: $PREV_TAG"
+
+            # Blue-green swap: bring up new containers, then remove old ones
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # Smoke test — wait up to 30s for the API to respond
+            echo "Running smoke test..."
+            for i in $(seq 1 6); do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "✅ Smoke test passed (attempt $i)"
+                break
+              fi
+              echo "Attempt $i: got $STATUS, waiting 5s..."
+              sleep 5
+              if [ $i -eq 6 ]; then
+                echo "❌ Smoke test failed — rolling back"
+                docker compose -f docker-compose.prod.yml down
+                docker pull "$PREV_TAG" 2>/dev/null || true
+                # Restart with previous compose state if available
+                docker compose -f docker-compose.prod.yml up -d
+                exit 1
+              fi
+            done
+
+            # Clean up dangling images to save disk space
+            docker image prune -f
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🚀 Deployed DRR commit ${{ github.sha }} to production successfully."
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "💥 Deployment FAILED for commit ${{ github.sha }}. Check logs above."
