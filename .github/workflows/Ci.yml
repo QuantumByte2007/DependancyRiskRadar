@@ -91,10 +91,11 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit Python dependencies
-        # CVE-2025-54121 + PYSEC-2026-161: starlette transitive CVEs requiring >=0.47.2/1.0.1
-        # ignored until a FastAPI version compatible with starlette 1.x is available
+        # All 3 are starlette transitive CVEs — FastAPI 0.115.0 pins starlette<0.40.0,
+        # so these cannot be fixed without a FastAPI upgrade. Revisit when FastAPI 0.116+ ships.
         run: >
           pip-audit -r dependency-risk-radar/backend/requirements.txt --strict
+          --ignore-vuln CVE-2024-47874
           --ignore-vuln CVE-2025-54121
           --ignore-vuln PYSEC-2026-161
 
