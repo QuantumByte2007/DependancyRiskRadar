@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from jinja2 import Template
+from jinja2 import Environment
 
 from app.core.models import AnalysisReport
 
@@ -174,7 +174,7 @@ def export_pdf(report: AnalysisReport, output_path: Path) -> Path:
     all_comps = sorted(report.components, key=lambda c: -c.scores.global_score)
 
     # We pass component dicts (not objects) so Jinja can access nested keys
-    tpl = Template(HTML_TEMPLATE)
+    tpl = Environment(autoescape=True).from_string(HTML_TEMPLATE)
     html = tpl.render(
         report=report,
         summary=summary,
