@@ -48,7 +48,7 @@ app.add_middleware(
 # In-memory report store (replace with DB in production)
 _reports: dict[str, dict] = {}
 _jobs: dict[str, dict] = {}        # job_id → {status, progress, report_id}
-OUTPUT_BASE = Path(os.getenv("OUTPUT_DIR", "/tmp/drr_reports"))
+OUTPUT_BASE = Path(os.getenv("OUTPUT_DIR", str(Path(tempfile.gettempdir()) / "drr_reports")))
 
 
 # ─────────────────────────────────────────────
