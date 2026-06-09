@@ -122,3 +122,45 @@ jobs:
       - name: Audit Node dependencies
         working-directory: dependency-risk-radar/frontend
         run: npm audit --audit-level=high
+  # ─────────────────────────────────────────
+  # Stage 6 — Send pipeline logs to Loki
+  # ─────────────────────────────────────────
+  send-logs-to-loki:
+    name: Observability · Push logs to Loki
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - sast-python
+      - sast-js
+      - secrets-scan
+      - sca-python
+      - sca-node
+    steps:
+      - name: Push pipeline results to Loki
+        env:
+          LOKI_URL: ${{ secrets.LOKI_URL }}
+        run: |
+          TIMESTAMP=$(date +%s%N)
+
+          curl -s -X POST "${LOKI_URL}/loki/api/v1/push" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"streams\": [
+                {
+                  \"stream\": {
+                    \"job\":      \"github-actions\",
+                    \"pipeline\": \"ci\",
+                    \"repo\":     \"${{ github.repository }}\",
+                    \"branch\":   \"${{ github.ref_name }}\",
+                    \"event\":    \"${{ github.event_name }}\"
+                  },
+                  \"values\": [
+                    [
+                      \"${TIMESTAMP}\",
+                      \"{\\\"run_id\\\": \\\"${{ github.run_id }}\\\", \\\"run_number\\\": \\\"${{ github.run_number }}\\\", \\\"commit\\\": \\\"${{ github.sha }}\\\", \\\"actor\\\": \\\"${{ github.actor }}\\\", \\\"sast_python\\\": \\\"${{ needs.sast-python.result }}\\\", \\\"sast_js\\\": \\\"${{ needs.sast-js.result }}\\\", \\\"secrets_scan\\\": \\\"${{ needs.secrets-scan.result }}\\\", \\\"sca_python\\\": \\\"${{ needs.sca-python.result }}\\\", \\\"sca_node\\\": \\\"${{ needs.sca-node.result }}\\\"}\"
+                    ]
+                  ]
+                }
+              ]
+            }"
+  
