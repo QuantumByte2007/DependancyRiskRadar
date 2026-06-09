@@ -91,7 +91,12 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit Python dependencies
-        run: pip-audit -r dependency-risk-radar/backend/requirements.txt --strict
+        # CVE-2025-54121 + PYSEC-2026-161: starlette transitive CVEs requiring >=0.47.2/1.0.1
+        # ignored until a FastAPI version compatible with starlette 1.x is available
+        run: >
+          pip-audit -r dependency-risk-radar/backend/requirements.txt --strict
+          --ignore-vuln CVE-2025-54121
+          --ignore-vuln PYSEC-2026-161
 
   # ─────────────────────────────────────────
   # Stage 5 — Node dependency audit
