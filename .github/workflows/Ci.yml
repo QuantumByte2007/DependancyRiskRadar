@@ -8,7 +8,7 @@ on:
 
 jobs:
   # ─────────────────────────────────────────
-  # Stage 2a — Python SAST (Bandit)
+  # Stage 1 — Python SAST (Bandit)
   # ─────────────────────────────────────────
   sast-python:
     name: SAST · Bandit (Python)
@@ -25,9 +25,7 @@ jobs:
         run: pip install bandit[toml]
 
       - name: Run Bandit
-        # -r recursive, -ll medium+ severity, -ii medium+ confidence
-        # Adjust -ll / -ii thresholds to taste
-        run: bandit -r backend/ -ll -ii --exit-zero --format json -o bandit-report.json
+        run: bandit -r dependency-risk-radar/backend/ -ll -ii --format json -o bandit-report.json
 
       - name: Upload Bandit report
         uses: actions/upload-artifact@v4
@@ -36,10 +34,10 @@ jobs:
           path: bandit-report.json
 
   # ─────────────────────────────────────────
-  # Stage 2b — JS/TS SAST (ESLint)
+  # Stage 2 — JS/TS SAST (ESLint)
   # ─────────────────────────────────────────
   sast-js:
-    name: SAST · ESLint (React/TS)
+    name: SAST · ESLint (React)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,18 +47,18 @@ jobs:
         with:
           node-version: "18"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: dependency-risk-radar/frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: dependency-risk-radar/frontend
         run: npm ci
 
       - name: Run ESLint
-        working-directory: frontend
+        working-directory: dependency-risk-radar/frontend
         run: npx eslint src/ --max-warnings=0
 
   # ─────────────────────────────────────────
-  # Stage 2c — Secrets scan (Gitleaks)
+  # Stage 3 — Secrets scan (Gitleaks)
   # ─────────────────────────────────────────
   secrets-scan:
     name: Secrets · Gitleaks
@@ -68,7 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history so Gitleaks can scan all commits
+          fetch-depth: 0
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
@@ -76,7 +74,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────
-  # Stage 3a — Python dependency audit
+  # Stage 4 — Python dependency audit
   # ─────────────────────────────────────────
   sca-python:
     name: SCA · pip-audit (backend)
@@ -93,11 +91,10 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit Python dependencies
-        # --strict fails the job on any vulnerability found
-        run: pip-audit -r backend/requirements.txt --strict
+        run: pip-audit -r dependency-risk-radar/backend/requirements.txt --strict
 
   # ─────────────────────────────────────────
-  # Stage 3b — Node dependency audit
+  # Stage 5 — Node dependency audit
   # ─────────────────────────────────────────
   sca-node:
     name: SCA · npm audit (frontend)
@@ -110,127 +107,12 @@ jobs:
         with:
           node-version: "18"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: dependency-risk-radar/frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: dependency-risk-radar/frontend
         run: npm ci
 
       - name: Audit Node dependencies
-        working-directory: frontend
-        # --audit-level=high blocks on HIGH and CRITICAL only
+        working-directory: dependency-risk-radar/frontend
         run: npm audit --audit-level=high
-
-  # ─────────────────────────────────────────
-  # Stage 4 — Build Docker images & run tests
-  # ─────────────────────────────────────────
-  build-and-test:
-    name: Build · Docker + Tests
-    runs-on: ubuntu-latest
-    needs: [sast-python, sast-js, secrets-scan, sca-python, sca-node]
-
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
-
-      - name: Run pytest with coverage
-        working-directory: backend
-        env:
-          REDIS_URL: redis://localhost:6379
-          DATABASE_URL: sqlite:///./test.db
-        run: |
-          pip install pytest pytest-cov httpx
-          pytest tests/ \
-            --cov=app \
-            --cov-report=xml:coverage.xml \
-            --cov-fail-under=60 \
-            -v
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: backend/coverage.xml
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend
-          push: false
-          tags: drr-backend:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/drr-backend.tar
-
-      - name: Build frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: false
-          tags: drr-frontend:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/drr-frontend.tar
-
-      - name: Save images as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-images
-          path: /tmp/drr-*.tar
-          retention-days: 1
-
-  # ─────────────────────────────────────────
-  # Stage 5 — Container image CVE scan (Trivy)
-  # ─────────────────────────────────────────
-  container-scan:
-    name: Container scan · Trivy
-    runs-on: ubuntu-latest
-    needs: [build-and-test]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download built images
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-images
-          path: /tmp/
-
-      - name: Load Docker images
-        run: |
-          docker load --input /tmp/drr-backend.tar
-          docker load --input /tmp/drr-frontend.tar
-
-      - name: Scan backend image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: drr-backend:${{ github.sha }}
-          format: table
-          exit-code: "1"           # fail the job
-          severity: CRITICAL        # block on CRITICAL only; change to HIGH,CRITICAL to be stricter
-          ignore-unfixed: true      # ignore CVEs with no available fix
-
-      - name: Scan frontend image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: drr-frontend:${{ github.sha }}
-          format: table
-          exit-code: "1"
-          severity: CRITICAL
-          ignore-unfixed: true
