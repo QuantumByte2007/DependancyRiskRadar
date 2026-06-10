@@ -143,46 +143,4 @@ jobs:
         run: |
           echo "🚀 Deployed DRR commit ${{ github.sha }} to production successfully."
 
-  # ─────────────────────────────────────────
-  # Stage 8 — Send pipeline logs to Loki
-  # ─────────────────────────────────────────
-  send-logs-to-loki:
-    name: Observability · Push logs to Loki
-    runs-on: ubuntu-latest
-    if: always()
-    needs:
-      - push-images
-      - deploy
-
-    steps:
-      - name: Push pipeline results to Loki
-        env:
-          LOKI_URL: ${{ secrets.LOKI_URL }}
-        run: |
-          TIMESTAMP=$(date +%s%N)
-
-          curl -s -X POST "${LOKI_URL}/loki/api/v1/push" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"streams\": [
-                {
-                  \"stream\": {
-                    \"job\":      \"github-actions\",
-                    \"pipeline\": \"cd\",
-                    \"repo\":     \"${{ github.repository }}\",
-                    \"branch\":   \"${{ github.ref_name }}\",
-                    \"event\":    \"${{ github.event_name }}\"
-                  },
-                  \"values\": [
-                    [
-                      \"${TIMESTAMP}\",
-                      \"{\\\"run_id\\\": \\\"${{ github.run_id }}\\\", \\\"run_number\\\": \\\"${{ github.run_number }}\\\", \\\"commit\\\": \\\"${{ github.sha }}\\\", \\\"actor\\\": \\\"${{ github.actor }}\\\", \\\"image_tag\\\": \\\"${{ needs.push-images.outputs.image_tag }}\\\", \\\"push_images\\\": \\\"${{ needs.push-images.result }}\\\", \\\"deploy\\\": \\\"${{ needs.deploy.result }}\\\"}\"
-                    ]
-                  ]
-                }
-              ]
-            }"
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "💥 Deployment FAILED for commit ${{ github.sha }}. Check logs above."
+  
