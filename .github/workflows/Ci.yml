@@ -154,16 +154,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install backend dependencies
-        run: pip install -r dependency-risk-radar/backend/requirements.txt
-
+      - name: Install backend dependencies and test tools
+        working-directory: dependency-risk-radar/backend
+        run: pip install -r requirements-test.txt
+        
       - name: Run pytest with coverage
         working-directory: dependency-risk-radar/backend
         env:
           REDIS_URL: redis://localhost:6379
           DATABASE_URL: sqlite:///./test.db
         run: |
-          pip install pytest pytest-cov httpx
           pytest tests/ \
             --cov=app \
             --cov-report=xml:coverage.xml \
