@@ -1,0 +1,45 @@
+# ── Secrets & local config ────────────────────────
+.env
+*.env
+.env.*
+!.env.example
+
+# ── Claude Code local data ────────────────────────
+.claude/
+
+# ── Generated reports / session artifacts ─────────
+rapport_session.html
+*.html
+drr_reports/
+/tmp/
+
+# ── Docker overrides (may contain secrets) ────────
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ── OS & editor noise ─────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Python ────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# ── Node ──────────────────────────────────────────
+node_modules/
+
+# ── Logs ──────────────────────────────────────────
+*.log
