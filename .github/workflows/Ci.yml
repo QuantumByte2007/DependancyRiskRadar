@@ -264,8 +264,6 @@ jobs:
 
     steps:
       - name: Push pipeline results to Loki
-        # Skip silently if LOKI_URL secret is not configured yet
-        if: ${{ secrets.LOKI_URL != '' }}
         env:
           LOKI_URL: ${{ secrets.LOKI_URL }}
         run: |
