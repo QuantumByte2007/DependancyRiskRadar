@@ -117,6 +117,15 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Resolve image URIs
+        id: image-uris
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          echo "backend=$ECR_REGISTRY/drr/backend:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "frontend=$ECR_REGISTRY/drr/frontend:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
       # ── Deploy Backend ──────────────────────────────
       - name: Download backend task definition
         run: |
@@ -131,7 +140,7 @@ jobs:
         with:
           task-definition: backend-task-def.json
           container-name: drr-backend
-          image: ${{ needs.push-images.outputs.backend_image }}
+          image: ${{ steps.image-uris.outputs.backend }}
 
       - name: Deploy backend to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -155,7 +164,7 @@ jobs:
         with:
           task-definition: frontend-task-def.json
           container-name: drr-frontend
-          image: ${{ needs.push-images.outputs.frontend_image }}
+          image: ${{ steps.image-uris.outputs.frontend }}
 
       - name: Deploy frontend to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
