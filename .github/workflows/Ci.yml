@@ -1,5 +1,4 @@
 name: CI — Security & Quality Gate
-
 on:
   pull_request:
     branches: [main]
@@ -164,7 +163,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           DATABASE_URL: sqlite:///./test.db
         run: |
-          pip install pytest pytest-cov httpx
+          
           pytest tests/ \
             --cov=app \
             --cov-report=xml:coverage.xml \
