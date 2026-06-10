@@ -1,0 +1,6 @@
+# CVE-2025-68121: Go crypto/tls bug inside frida's bundled Go binary (_frida.abi3.so).
+# frida is a transitive dep of androguard→apkinspector and is NOT used at runtime.
+# Primary fix: frida is explicitly uninstalled in the Dockerfile after pip install.
+# This entry is a fallback in case a future transitive upgrade re-introduces it
+# before a patched frida wheel that bundles Go ≥ 1.24.13 is available.
+CVE-2025-68121

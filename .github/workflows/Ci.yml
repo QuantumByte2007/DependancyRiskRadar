@@ -236,6 +236,7 @@ jobs:
           exit-code: "1"
           severity: CRITICAL
           ignore-unfixed: true
+          trivyignores: dependency-risk-radar/backend/.trivyignore
 
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@master
