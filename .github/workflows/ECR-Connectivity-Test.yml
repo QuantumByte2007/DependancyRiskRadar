@@ -1,0 +1,102 @@
+name: ECR — Connectivity Test
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday at 06:00 UTC
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-ecr-connectivity:
+    name: Test · Amazon ECR Connectivity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── 1. Verify IAM identity ──────────────────────────
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      # ── 2. Login to ECR ─────────────────────────────────
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── 3. List ECR repositories ─────────────────────────
+      - name: List ECR repositories
+        run: |
+          echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
+          aws ecr describe-repositories \
+            --query 'repositories[*].{Name:repositoryName,URI:repositoryUri,CreatedAt:createdAt}' \
+            --output table
+
+      # ── 4. Check drr/backend repository ─────────────────
+      - name: Check drr/backend repository
+        run: |
+          aws ecr describe-repositories \
+            --repository-names drr/backend \
+            --query 'repositories[0].{Name:repositoryName,URI:repositoryUri}' \
+            --output json
+          echo "✅ drr/backend repository reachable"
+
+      # ── 5. Check drr/frontend repository ────────────────
+      - name: Check drr/frontend repository
+        run: |
+          aws ecr describe-repositories \
+            --repository-names drr/frontend \
+            --query 'repositories[0].{Name:repositoryName,URI:repositoryUri}' \
+            --output json
+          echo "✅ drr/frontend repository reachable"
+
+      # ── 6. List latest images in each repo ───────────────
+      - name: List latest backend images
+        run: |
+          aws ecr describe-images \
+            --repository-name drr/backend \
+            --query 'sort_by(imageDetails, &imagePushedAt)[-5:].{Tag:imageTags[0],Digest:imageDigest,PushedAt:imagePushedAt,SizeMB:imageSizeInBytes}' \
+            --output table || echo "No images found in drr/backend"
+
+      - name: List latest frontend images
+        run: |
+          aws ecr describe-images \
+            --repository-name drr/frontend \
+            --query 'sort_by(imageDetails, &imagePushedAt)[-5:].{Tag:imageTags[0],Digest:imageDigest,PushedAt:imagePushedAt,SizeMB:imageSizeInBytes}' \
+            --output table || echo "No images found in drr/frontend"
+
+      # ── 7. Pull test (latest tag only, no full layer download) ──
+      - name: Pull manifest for backend:latest
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker manifest inspect $ECR_REGISTRY/drr/backend:latest \
+            && echo "✅ backend:latest manifest reachable" \
+            || echo "⚠️  backend:latest not found (may not exist yet)"
+
+      - name: Pull manifest for frontend:latest
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker manifest inspect $ECR_REGISTRY/drr/frontend:latest \
+            && echo "✅ frontend:latest manifest reachable" \
+            || echo "⚠️  frontend:latest not found (may not exist yet)"
+
+      # ── 8. Summary ───────────────────────────────────────
+      - name: Connectivity summary
+        if: always()
+        run: |
+          echo "============================================"
+          echo "  ECR Connectivity Test — Summary"
+          echo "============================================"
+          echo "  Registry : ${{ steps.login-ecr.outputs.registry }}"
+          echo "  Region   : ${{ secrets.AWS_REGION }}"
+          echo "  Run ID   : ${{ github.run_id }}"
+          echo "  Triggered: ${{ github.event_name }}"
+          echo "============================================"
