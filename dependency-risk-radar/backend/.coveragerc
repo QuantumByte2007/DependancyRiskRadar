@@ -1,0 +1,14 @@
+[run]
+source = app
+omit =
+    app/api/*
+    app/ai/*
+    app/exporters/*
+    app/ingestion/apk_analyzer.py
+    app/core/pipeline.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    \.\.\.

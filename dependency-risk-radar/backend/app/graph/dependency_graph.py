@@ -124,6 +124,8 @@ class DependencyGraph:
         ]
         paths: list[list[str]] = []
         for direct in direct_nodes:
+            if direct == vuln_purl:
+                continue
             try:
                 path = nx.shortest_path(self.G, source=direct, target=vuln_purl)
                 paths.append(path)

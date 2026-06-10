@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\('name:', p.get\\('name'\\)\\); print\\('scripts:', list\\(p.get\\('scripts',{}\\).keys\\(\\)\\)\\)\")",
+      "Bash(npm install *)",
+      "Bash(sed -n '1,20p' /mnt/c/Users/moham/Dependency-Risk-Radar-SecOps/dependency-risk-radar/backend/app/exporters/pdf_exporter.py)",
+      "Bash(sed -n '170,185p' /mnt/c/Users/moham/Dependency-Risk-Radar-SecOps/dependency-risk-radar/backend/app/exporters/pdf_exporter.py)",
+      "Bash(pip install *)",
+      "Bash(bandit -r dependency-risk-radar/backend/ -ll -ii --format text)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m pip install bandit)",
+      "Bash(unzip *)",
+      "Bash(git *)"
+    ]
+  }
+}

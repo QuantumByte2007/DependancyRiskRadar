@@ -154,13 +154,7 @@ def _score_trackers(comp: Component) -> float:
 def compute_project_summary(components: list[Component]) -> dict:
     """Return aggregate statistics for the whole project."""
     if not components:
-        return {
-            "total_components": 0, "direct_components": 0, "transitive_components": 0,
-            "vulnerable_components": 0, "critical_components": 0, "high_components": 0,
-            "moderate_components": 0, "low_components": 0, "total_cves": 0,
-            "copyleft_components": 0, "tracker_components": 0,
-            "avg_global_score": 0.0, "max_global_score": 0.0, "outdated_components": 0,
-        }
+        return {}
 
     scores = [c.scores.global_score for c in components]
     cve_counts = [len(c.vulnerabilities) for c in components]

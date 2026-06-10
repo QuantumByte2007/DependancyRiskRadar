@@ -23,7 +23,7 @@ STANDARD_DEP = re.compile(
     r'(?P<scope>implementation|api|compileOnly|runtimeOnly|annotationProcessor'
     r'|kapt|ksp|testImplementation|androidTestImplementation|debugImplementation'
     r'|releaseImplementation)\s*[(\s]*["\']'
-    r'(?P<group>[\w.\-]+):(?P<artifact>[\w.\-]+):(?P<version>[\w.\-+]+)["\']'
+    r'(?P<group>[\w.\-]+):(?P<artifact>[\w.\-]+):(?P<version>[\w.\-+${}]+)["\']'
 )
 
 # Map form: implementation group: "...", name: "...", version: "..."
@@ -227,8 +227,10 @@ def _parse_tree_output(output: str) -> list[dict]:
         artifact = m.group("artifact")
         version = m.group("resolved") or m.group("version")
 
-        # Depth = number of 4-char indent segments
-        depth = len(prefix.replace("|", " ").replace("\\", " ").replace("+", " ")) // 4
+        # Each indentation level is 5 chars (e.g. "|    "); connector is 4 chars ("+---").
+        # Subtract the connector width then divide by 5.
+        normalized = prefix.replace("|", " ").replace("\\", " ").replace("+", " ")
+        depth = max(0, (len(normalized) - 4) // 5)
 
         purl = _build_purl(group, artifact, version)
 

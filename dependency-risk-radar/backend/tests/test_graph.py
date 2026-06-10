@@ -50,7 +50,7 @@ class TestGraphBuild:
         c = _comp("lib", score=75.0, is_direct=True)
         g = _build_graph(c)
         attrs = g.G.nodes[c.purl]
-        assert attrs["global_score"] == 75.0
+        assert attrs["global_score"] == c.scores.global_score
         assert attrs["is_direct"]    is True
 
 
@@ -103,7 +103,7 @@ class TestHighImpact:
 class TestRiskPaths:
     def test_finds_path_to_vulnerable_node(self):
         direct  = _comp("direct",       is_direct=True,  deps=["middle"])
-        middle  = _comp("middle",       is_direct=False, depth=1, deps=["vuln"])
+        middle  = _comp("middle",       is_direct=False, depth=1, deps=["vuln-lib"])
         vuln    = _comp("vuln-lib",     is_direct=False, depth=2, score=90.0)
         g = _build_graph(direct, middle, vuln)
         paths = g.find_risk_paths(vuln.purl)

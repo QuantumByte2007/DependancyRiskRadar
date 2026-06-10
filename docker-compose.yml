@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  # ── FastAPI Backend ──────────────────────────────────────
+  backend:
+    build:
+      context: dependency-risk-radar/backend
+      dockerfile: Dockerfile
+    container_name: drr-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./dependency-risk-radar/backend:/app              # hot reload in dev
+      - drr_reports:/tmp/drr_reports
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVD_API_KEY=${NVD_API_KEY:-}
+      - DATABASE_URL=sqlite:////tmp/drr_reports/drr.db
+      - REDIS_URL=redis://redis:6379/0
+      - OUTPUT_DIR=/tmp/drr_reports
+      - DEBUG=true
+    depends_on:
+      - redis
+    networks:
+      - drr_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── React Frontend ───────────────────────────────────────
+  frontend:
+    build:
+      context: ./dependency-risk-radar/frontend
+      dockerfile: Dockerfile
+    container_name: drr-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - drr_net
+    restart: unless-stopped
+
+  # ── Redis (job queue cache) ──────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: drr-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - drr_net
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+volumes:
+  drr_reports:
+    driver: local
+
+networks:
+  drr_net:
+    driver: bridge
