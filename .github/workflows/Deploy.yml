@@ -1,146 +1,231 @@
 name: CD — Build, Push & Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI — Security & Quality Gate"]
+    types:
+      - completed
     branches: [main]
 
-# Prevent concurrent deployments (queue instead of cancel)
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   # ─────────────────────────────────────────
-  # Stage 6 — Build & push to Docker Hub
+  # Stage 6 — Push vers ECR
+  # (images déjà buildées et testées par CI)
   # ─────────────────────────────────────────
   push-images:
-    name: Push · Docker Hub
+    name: Push · Amazon ECR
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
+      image_tag: ${{ github.event.workflow_run.head_sha }}
+      backend_image: ${{ steps.tag-backend.outputs.image }}
+      frontend_image: ${{ steps.tag-frontend.outputs.image }}
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      # Generate tags: commit SHA (always) + "latest" (on main only)
-      - name: Extract metadata (backend)
-        id: meta
-        uses: docker/metadata-action@v5
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/drr-backend
-          tags: |
-            type=sha,prefix=,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Build & push backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./dependency-risk-radar/backend
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Extract metadata (frontend)
-        id: meta-frontend
-        uses: docker/metadata-action@v5
+      # Récupérer les images buildées par le CI
+      - name: Download images from CI
+        uses: actions/download-artifact@v4
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/drr-frontend
-          tags: |
-            type=sha,prefix=,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          name: docker-images
+          path: /tmp/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./dependency-risk-radar/frontend
-          push: true
-          tags: ${{ steps.meta-frontend.outputs.tags }}
-          labels: ${{ steps.meta-frontend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Load Docker images
+        run: |
+          docker load --input /tmp/drr-backend.tar
+          docker load --input /tmp/drr-frontend.tar
+
+      # Tag et Push Backend
+      - name: Tag & Push Backend to ECR
+        id: tag-backend
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          docker tag drr-backend:$IMAGE_TAG \
+            $ECR_REGISTRY/drr/backend:$IMAGE_TAG
+          docker tag drr-backend:$IMAGE_TAG \
+            $ECR_REGISTRY/drr/backend:latest
+
+          docker push $ECR_REGISTRY/drr/backend:$IMAGE_TAG
+          docker push $ECR_REGISTRY/drr/backend:latest
+
+          echo "image=$ECR_REGISTRY/drr/backend:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # Tag et Push Frontend
+      - name: Tag & Push Frontend to ECR
+        id: tag-frontend
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          docker tag drr-frontend:$IMAGE_TAG \
+            $ECR_REGISTRY/drr/frontend:$IMAGE_TAG
+          docker tag drr-frontend:$IMAGE_TAG \
+            $ECR_REGISTRY/drr/frontend:latest
+
+          docker push $ECR_REGISTRY/drr/frontend:$IMAGE_TAG
+          docker push $ECR_REGISTRY/drr/frontend:latest
+
+          echo "image=$ECR_REGISTRY/drr/frontend:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
   # ─────────────────────────────────────────
-  # Stage 7 — Deploy to cloud VM
+  # Stage 7 — Deploy vers ECS
   # ─────────────────────────────────────────
   deploy:
-    name: Deploy · Cloud VM
+    name: Deploy · Amazon ECS
     runs-on: ubuntu-latest
     needs: [push-images]
-    environment: production      # requires manual approval in GitHub (optional)
+    environment: production
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Copy docker-compose to server
-        uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "docker-compose.prod.yml,.env.prod.example"
-          target: "~/drr"
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            set -e
-            cd ~/drr
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
 
-            # Pull new images (tagged with commit SHA for traceability)
-            export IMAGE_TAG=${{ needs.push-images.outputs.image_tag }}
-            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-            docker compose -f docker-compose.prod.yml pull
+      # ── Deploy Backend ──────────────────────────────
+      - name: Download backend task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition drr-backend \
+            --query taskDefinition \
+            > backend-task-def.json
 
-            # Store current running image tag for rollback
-            PREV_TAG=$(docker inspect drr-backend --format='{{index .Config.Image}}' 2>/dev/null || echo "none")
-            echo "Previous tag: $PREV_TAG"
+      - name: Update backend image in task definition
+        id: backend-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: backend-task-def.json
+          container-name: drr-backend
+          image: ${{ needs.push-images.outputs.backend_image }}
 
-            # Blue-green swap: bring up new containers, then remove old ones
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+      - name: Deploy backend to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.backend-task-def.outputs.task-definition }}
+          service: drr-backend-service
+          cluster: drr-cluster
+          wait-for-service-stability: true
 
-            # Smoke test — wait up to 30s for the API to respond
-            echo "Running smoke test..."
-            for i in $(seq 1 6); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health || echo "000")
-              if [ "$STATUS" = "200" ]; then
-                echo "✅ Smoke test passed (attempt $i)"
-                break
-              fi
-              echo "Attempt $i: got $STATUS, waiting 5s..."
-              sleep 5
-              if [ $i -eq 6 ]; then
-                echo "❌ Smoke test failed — rolling back"
-                docker compose -f docker-compose.prod.yml down
-                docker pull "$PREV_TAG" 2>/dev/null || true
-                # Restart with previous compose state if available
-                docker compose -f docker-compose.prod.yml up -d
-                exit 1
-              fi
-            done
+      # ── Deploy Frontend ─────────────────────────────
+      - name: Download frontend task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition drr-frontend \
+            --query taskDefinition \
+            > frontend-task-def.json
 
-            # Clean up dangling images to save disk space
-            docker image prune -f
+      - name: Update frontend image in task definition
+        id: frontend-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: frontend-task-def.json
+          container-name: drr-frontend
+          image: ${{ needs.push-images.outputs.frontend_image }}
+
+      - name: Deploy frontend to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.frontend-task-def.outputs.task-definition }}
+          service: drr-frontend-service
+          cluster: drr-cluster
+          wait-for-service-stability: true
+
+      # ── Smoke Test ──────────────────────────────────
+      - name: Smoke test
+        run: |
+          echo "Running smoke test..."
+          for i in $(seq 1 6); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://${{ secrets.EC2_DRR_IP }}:8000/api/v1/health \
+              || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Smoke test passed (attempt $i)"
+              break
+            fi
+            echo "Attempt $i: got $STATUS, waiting 10s..."
+            sleep 10
+            if [ $i -eq 6 ]; then
+              echo "❌ Smoke test failed"
+              exit 1
+            fi
+          done
+
+  # ─────────────────────────────────────────
+  # Stage 8 — Logs vers Loki
+  # ─────────────────────────────────────────
+  send-logs-to-loki:
+    name: Observability · Push logs to Loki
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - push-images
+      - deploy
+
+    steps:
+      - name: Push pipeline results to Loki
+        env:
+          LOKI_URL: ${{ secrets.LOKI_URL }}
+        run: |
+          TIMESTAMP=$(date +%s%N)
+          curl -s -X POST "${LOKI_URL}/loki/api/v1/push" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"streams\": [{
+                \"stream\": {
+                  \"job\":         \"github-actions\",
+                  \"ci_job\":      \"deploy-ecs\",
+                  \"pipeline\":    \"cd\",
+                  \"repo\":        \"${{ github.repository }}\",
+                  \"branch\":      \"${{ github.ref_name }}\",
+                  \"environment\": \"production\",
+                  \"status\":      \"${{ needs.deploy.result }}\"
+                },
+                \"values\": [[
+                  \"${TIMESTAMP}\",
+                  \"{\\\"run_id\\\": \\\"${{ github.run_id }}\\\", \\\"commit\\\": \\\"${{ github.event.workflow_run.head_sha }}\\\", \\\"actor\\\": \\\"${{ github.actor }}\\\", \\\"image_tag\\\": \\\"${{ needs.push-images.outputs.image_tag }}\\\", \\\"push_images\\\": \\\"${{ needs.push-images.result }}\\\", \\\"deploy\\\": \\\"${{ needs.deploy.result }}\\\"}\"
+                ]]
+              }]
+            }" || true
 
       - name: Notify on success
-        if: success()
-        run: |
-          echo "🚀 Deployed DRR commit ${{ github.sha }} to production successfully."
+        if: ${{ needs.deploy.result == 'success' }}
+        run: echo "🚀 DRR commit ${{ github.event.workflow_run.head_sha }} déployé avec succès."
 
-  
+      - name: Notify on failure
+        if: ${{ needs.deploy.result == 'failure' }}
+        run: echo "💥 Déploiement FAILED pour commit ${{ github.event.workflow_run.head_sha }}."
